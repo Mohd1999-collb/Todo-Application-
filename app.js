@@ -10,7 +10,9 @@ const mongoDbSesson = require('connect-mongodb-session')(session);
 // File imports
 const { cleanUpAndValiDate } = require('./utils/AuthUtils');
 const userSchema = require('./userSchema');
-const {isAuth} = require('./middlewares/AuthMiddleware')
+const { isAuth } = require('./middlewares/AuthMiddleware')
+// const sessionModel = require('./sessionSchema');
+const todoModel = require('./models/todoModel');
 
 // Variable
 const app = express();
@@ -37,7 +39,7 @@ promise.then(() => {
 // Give the location of collection in mongodb atlas
 const store = new mongoDbSesson({
     uri: MONGO_URI,
-    collection : "sessions"
+    collection: "sessions"
 })
 
 // Middleware function for session authentication
@@ -45,8 +47,8 @@ app.use(
     session({
         secret: "This is Todo application.",
         resave: false,
-        saveUninitialized : false,
-        store : store
+        saveUninitialized: false,
+        store: store
     })
 )
 
@@ -136,7 +138,7 @@ app.post('/login', async (req, res) => {
         if (validator.isEmail(loginId)) {
             userDb = await userSchema.findOne({ email: loginId });
         } else {
-            userDb = await userSchema.findOne({ userName :  loginId});  
+            userDb = await userSchema.findOne({ userName: loginId });
         }
 
         //  If user is not exist
@@ -162,15 +164,16 @@ app.post('/login', async (req, res) => {
         // Save the session id into the mongodb database
         req.session.isAuth = true;
         req.session.user = {
-            name : userDb.name,
-            email : userDb.email,
-            userId : userDb._id
+            userName: userDb.userName,
+            email: userDb.email,
+            userId: userDb._id
         }
 
-        return res.send({
-            status: 200,
-            mesaage: "Login Successfully."
-        })
+        // return res.send({
+        //     status: 200,
+        //     mesaage: "Login Successfully."
+        // })
+        return res.redirect("/dashboard");
     } catch (error) {
         return res.send({
             status: 500,
@@ -180,9 +183,194 @@ app.post('/login', async (req, res) => {
     }
 })
 
-app.get('/dashboard', isAuth, (req, res) =>{
-    return res.send('Restricted Data');
+app.get('/dashboard', isAuth, async (req, res) => {
+    // return res.send('Restricted Data');
+    // return res.render(__dirname + "/views/dashboard");
+    const userName = req.session.user.userName;
+    try {
+        const todos = await todoModel.find({
+            userName: userName
+        });
+        // console.log(todos, "line 195")
+        return res.render("dashboard", {todos: todos});
+        // return res.send({
+        //     status: 201,
+        //     message: "Todos read success.",
+        //     data: todos
+        // })
+
+    } catch (error) {
+        return res.send({
+            status: 500,
+            message: "Database error.",
+            error: error
+        })
+    }
+
+
+    console.log(userName, "line 190");
+    return res.send("dashboard");
 })
+
+
+app.post('/logout', isAuth, (req, res) => {
+    req.session.destroy((error) => {
+        if (error) {
+            throw error;
+        } else {
+            return res.redirect('/login');
+        }
+    })
+})
+
+
+// Not working proper
+app.post('/logout_from_all_devices', isAuth, async (req, res) => {
+    // console.log(req.session);
+    const username = req.session.user.userName;
+     //create a session schema
+    const Schema = mongoose.Schema;
+    const sessionSchema = new Schema({ _id: String }, { strict: false });
+    const sessionModel = mongoose.model("session", sessionSchema);
+
+    try {
+        const deleteCount = await sessionModel.deleteMany({
+            "session.user.userName": username
+        });
+        return res.send({
+            status: 200,
+            message: "Log out from all devices successfully."
+        })
+    } catch (error) {
+        return res.send({
+            status: 500,
+            message: 'Log out failed.',
+            error: error
+        })
+    }
+})
+
+// Todo's API's
+
+// Todo create Api
+app.post('/create-item', isAuth, async (req, res) => {
+    const todoText = req.body.todo;
+
+    //data validation
+    if (!todoText) {
+        return res.send({
+            status: 400,
+            message: "Todo is Empty",
+        });
+    }
+
+    if (typeof todoText !== "string") {
+        return res.send({
+            status: 400,
+            message: "Invalid Todo format",
+        });
+    }
+
+    if (todoText.length > 100) {
+        return res.send({
+            status: 400,
+            message: "Todo is too long, should be less than 100 char.",
+        });
+    }
+
+    // Store the value inside todo model
+    const todo = new todoModel({
+        todo: todoText,
+        userName: req.session.user.userName
+    });
+
+
+    try {
+        const todoDb = await todo.save();
+        return res.send(
+            {
+                status: 201,
+                message: "Todo created successfully.",
+                data: todoDb
+            }
+        )
+    } catch (error) {
+        return res.send({
+            status: 500,
+            message: "Database erroe",
+            error: error
+        })
+    }
+})
+
+
+// Todo update Api
+app.put("/edit-item", isAuth, async (req, res) => {
+    const { id, newData } = req.body;
+
+    //data validation
+    if (!id || !newData) {
+        return res.send({
+            status: 400,
+            message: "Missing credentials",
+        });
+    }
+    if (typeof newData !== "string") {
+        return res.send({
+            status: 400,
+            message: "Invalid Todo format",
+        });
+    }
+
+    if (newData.length > 100) {
+        return res.send({
+            status: 400,
+            message: "Todo is too long, should be less than 100 char.",
+        });
+    }
+
+    try {
+        // It return the previous data value
+        const todoDb = await todoModel.findOneAndUpdate(
+            { _id: id },
+            { todo: newData }
+        )
+        return res.send({
+            status: 201,
+            message: "Todo updated successfully",
+            data: todoDb
+        })
+    } catch (error) {
+        return res.send({
+            status: 500,
+            message: "Database error.",
+            error: error
+        });
+    }
+})
+
+// Todo delete Api
+app.delete('/delete-item', isAuth, async (req, res) => {
+    const { id } = req.body;
+
+    try {
+        const todoDb = await todoModel.findOneAndDelete({
+            _id: id
+        });
+        return res.send({
+            status: 200,
+            message: "Todo deleted successfully",
+            data: todoDb
+        })
+    } catch (error) {
+        return res.send({
+            status: 500,
+            message: "Database error",
+            error: error
+        })
+    }
+})
+
 
 app.listen(PORT, () => {
     console.log(style.blue.bold.underline(`Server started at port http://localhost:${PORT}`))
