@@ -13,6 +13,7 @@ const userSchema = require('./userSchema');
 const { isAuth } = require('./middlewares/AuthMiddleware')
 // const sessionModel = require('./sessionSchema');
 const todoModel = require('./models/todoModel');
+const { rateLimiting } = require('./middlewares/RateLimitingMiddleware')
 
 // Variable
 const app = express();
@@ -24,6 +25,7 @@ const MONGO_URI = `mongodb+srv://mohdTalib:talib12345@cluster0.abqujwr.mongodb.n
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }))
+app.use(express.static("public"));
 
 // Set EJS as template engine 
 app.set('view engine', 'ejs');
@@ -192,7 +194,7 @@ app.get('/dashboard', isAuth, async (req, res) => {
             userName: userName
         });
         // console.log(todos, "line 195")
-        return res.render("dashboard", {todos: todos});
+        return res.render("dashboard", { todos: todos });
         // return res.send({
         //     status: 201,
         //     message: "Todos read success.",
@@ -224,11 +226,10 @@ app.post('/logout', isAuth, (req, res) => {
 })
 
 
-// Not working proper
 app.post('/logout_from_all_devices', isAuth, async (req, res) => {
     // console.log(req.session);
     const username = req.session.user.userName;
-     //create a session schema
+    //create a session schema
     const Schema = mongoose.Schema;
     const sessionSchema = new Schema({ _id: String }, { strict: false });
     const sessionModel = mongoose.model("session", sessionSchema);
@@ -253,7 +254,7 @@ app.post('/logout_from_all_devices', isAuth, async (req, res) => {
 // Todo's API's
 
 // Todo create Api
-app.post('/create-item', isAuth, async (req, res) => {
+app.post('/create-item', isAuth, rateLimiting, async (req, res) => {
     const todoText = req.body.todo;
 
     //data validation
@@ -307,7 +308,6 @@ app.post('/create-item', isAuth, async (req, res) => {
 // Todo update Api
 app.put("/edit-item", isAuth, async (req, res) => {
     const { id, newData } = req.body;
-
     //data validation
     if (!id || !newData) {
         return res.send({
@@ -335,6 +335,7 @@ app.put("/edit-item", isAuth, async (req, res) => {
             { _id: id },
             { todo: newData }
         )
+        console.log(todoDb, "line 339 app.js")
         return res.send({
             status: 201,
             message: "Todo updated successfully",
@@ -352,25 +353,88 @@ app.put("/edit-item", isAuth, async (req, res) => {
 // Todo delete Api
 app.delete('/delete-item', isAuth, async (req, res) => {
     const { id } = req.body;
-
     try {
         const todoDb = await todoModel.findOneAndDelete({
             _id: id
         });
         return res.send({
             status: 200,
-            message: "Todo deleted successfully",
+            message: "Todo deleted successfully.",
             data: todoDb
         })
     } catch (error) {
         return res.send({
             status: 500,
-            message: "Database error",
+            message: "Database error.",
             error: error
         })
     }
 })
 
+
+// Read todo
+app.get('/read-todo', async (req, res) => {
+    // console.log(req.session);
+    const userName = req.session.user.userName;
+
+
+    try {
+        const todos = await todoModel.find({ userName: userName });
+        // console.log(todos);
+
+        if (todos.length === 0) {
+            return res.send({
+                status: 400,
+                message: "Todo is empty, Please create some.",
+            });
+        } else {
+
+            return res.send({
+                status: 200,
+                message: "Todos read Success",
+                data: todos,
+            });
+        }
+    } catch (error) {
+        return res.send({
+            status: 500,
+            message: "Database error",
+            error: error,
+        });
+    }
+})
+
+
+// Pagination Api's
+app.get('/pagination-dashboard', isAuth, async (req, res) => {
+    const skip = req.query.skip || 0; // client
+    const LIMIT = 5; // Backend
+    const userName = req.session.user.userName;
+
+    try {
+        const todos = await todoModel.aggregate([
+            // Match, pagination
+            { $match: { userName: userName } },
+            {
+                $facet: {
+                    data: [{ $skip: parseInt(skip) }, { $limit: LIMIT }]
+                },
+            },
+        ]);
+        // console.log(todos[0].data, "line 423 app.js")
+        return res.send({
+            status: 200,
+            message: "Read success",
+            data: todos[0].data,
+        })
+    } catch (error) {
+        return res.send({
+            status: 500,
+            message: "Database error.",
+            error: error
+        })
+    }
+})
 
 app.listen(PORT, () => {
     console.log(style.blue.bold.underline(`Server started at port http://localhost:${PORT}`))
