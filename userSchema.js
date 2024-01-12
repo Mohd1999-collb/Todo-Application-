@@ -21,6 +21,11 @@ const userSchema = new Schema({
         required: true,
         unique: true
     },
+    emailAuthenticated: {
+        type: Boolean,
+        require: true,
+        default: false,
+      },
 })
 
 module.exports = mongoose.model("user", userSchema);
