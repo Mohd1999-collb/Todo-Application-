@@ -6,9 +6,10 @@ const bcrypt = require('bcrypt');
 const validator = require('validator');
 const session = require('express-session');
 const mongoDbSesson = require('connect-mongodb-session')(session);
+const jwt = require('jsonwebtoken')
 
 // File imports
-const { cleanUpAndValiDate } = require('./utils/AuthUtils');
+const { cleanUpAndValiDate, genrateJWTToken, sendVerficiationToken } = require('./utils/AuthUtils');
 const userSchema = require('./userSchema');
 const { isAuth } = require('./middlewares/AuthMiddleware')
 // const sessionModel = require('./sessionSchema');
@@ -69,16 +70,13 @@ app.get("/", (req, res) => {
 
 // MVC --> MODEL VIEW CONTROLLER
 app.post('/register', async (req, res) => {
-    console.log(req.body);
+    // console.log(req.body);
     const { name, email, password, username } = req.body;
-
-
     // Data validation
     try {
         await cleanUpAndValiDate({ name, email, username, password });
 
         // Check if the user alreday exist or not
-
         const userExistEmail = await userSchema.findOne({ email: email });
         if (userExistEmail) {
             return res.send({
@@ -105,13 +103,17 @@ app.post('/register', async (req, res) => {
             // password: password
             password: hashPassword
         });
-
+          
         // Save into database
         try {
             const userDb = await user.save();
+            // Call to Genrate JWT Token function
+            const verificationToken = genrateJWTToken(email);
+            // Call to send mail function 
+            sendVerficiationToken({email, verificationToken})
             return res.send({
                 status: 201,
-                message: "User register successfully.",
+                message: "Registeration Successfull, Link has been sent to your registered email id. Please verify before login",
                 data: userDb,
             })
         } catch (error) {
@@ -131,6 +133,31 @@ app.post('/register', async (req, res) => {
     }
 
 })
+
+// Email verification api
+app.get("/api/:token", (req, res) => {
+    console.log(req.params);
+    const token = req.params.token;
+    const SECRET_KEY = "This is march nodejs class";
+  
+    jwt.verify(token, SECRET_KEY, async (err, decoded) => {
+      try {
+        const userDb = await userSchema.findOneAndUpdate(
+          { email: decoded },
+          { emailAuthenticated: true }
+        );
+        console.log(userDb);
+  
+        return res.status(200).redirect("/login");
+      } catch (error) {
+        res.send({
+          status: 500,
+          message: "database error",
+          error: error,
+        });
+      }
+    });
+  });
 
 app.post('/login', async (req, res) => {
     const { loginId, password } = req.body;
@@ -152,6 +179,13 @@ app.post('/login', async (req, res) => {
         }
 
 
+        // Check user email is authenticated or not
+        if (userDb.emailAuthenticated === false) {
+            return res.send({
+              status: 400,
+              message: "Email not authenticated",
+            });
+          }
         // Match the user password in database.
         const isMatch = await bcrypt.compare(password, userDb.password);
 
@@ -298,7 +332,7 @@ app.post('/create-item', isAuth, rateLimiting, async (req, res) => {
     } catch (error) {
         return res.send({
             status: 500,
-            message: "Database erroe",
+            message: "Database error",
             error: error
         })
     }
